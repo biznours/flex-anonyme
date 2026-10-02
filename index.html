@@ -12,6 +12,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- scrypt-js 3.0.1 (MIT, Richard Moore), copie locale : voir scrypt-LICENSE.txt -->
+<script src="scrypt.js"></script>
 <style>
 /* Mise en page : une colonne d'outil, motif « caviardage » (barres noires) tiré du relevé lui-même. */
 :root {
@@ -156,7 +158,7 @@ footer { font-size: 12.5px; color: var(--muted); }
           <li>Nom, adresse postale et adresse de résidence</li>
           <li>E-mail et date de naissance</li>
           <li>Alias du compte, dates d'ouverture</li>
-          <li>Votre numéro de compte IBKR, remplacé partout par <code>U0000000</code>, y compris dans le nom du fichier</li>
+          <li>Votre numéro de compte IBKR, remplacé partout par un faux numéro, y compris dans le nom du fichier. Il est toujours le même pour votre compte, sur n'importe quel ordinateur, et ne permet pas de retrouver le vrai.</li>
           <li>Les numéros d'autres comptes ou courtiers dans les transferts</li>
           <li>Votre identifiant de connexion, quand IBKR l'a laissé à moitié masqué</li>
         </ul>
@@ -174,7 +176,7 @@ footer { font-size: 12.5px; color: var(--muted); }
     </div>
     <div class="sample">
       <div class="cap"><span>Exemple : début d'un relevé, avant → après</span><span class="mono">&lt;AccountInformation …&gt;</span></div>
-<pre><span class="k">accountId=</span>"<span class="r">U1234567</span>"  →  <span class="v">"U0000000"</span>
+<pre><span class="k">accountId=</span>"<span class="r">U1234567</span>"  →  <span class="v">"U48271935"</span>  <span class="k">(toujours le même pour ce compte)</span>
 <span class="k">name=</span>"<span class="r">Prénom NOM</span>"  →  <span class="v">""</span>
 <span class="k">street=</span>"<span class="r">12 rue des Lilas</span>"  →  <span class="v">""</span>
 <span class="k">primaryEmail=</span>"<span class="r">prenom@exemple.fr</span>"  →  <span class="v">""</span>
@@ -192,6 +194,10 @@ footer { font-size: 12.5px; color: var(--muted); }
     <details>
       <summary>Le fichier anonymisé marche-t-il dans wheel-suite ou OLT ?</summary>
       <p>Oui. Seuls les champs personnels changent ; les opérations, positions et montants sont identiques à l'octet près. Un XML s'importe dans wheel-suite, un CSV dans OLT, comme l'original.</p>
+    </details>
+    <details>
+      <summary>Pourquoi un faux numéro plutôt que des zéros ?</summary>
+      <p>Pour que vos fichiers restent reconnaissables entre eux : le même compte donne toujours le même faux numéro, aujourd'hui comme dans deux semaines, sur votre PC comme sur un autre. Rien à noter. Le calcul prend quelques secondes et est fait exprès pour être lent : retrouver le vrai numéro demanderait d'essayer les 100 millions de numéros possibles, soit des années de calcul.</p>
     </details>
     <details>
       <summary>Quels CSV sont acceptés ?</summary>
@@ -230,8 +236,29 @@ function echapper(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 // Remplace les numéros de compte (le relevé d'abord, puis tout numéro IBKR U…/I…),
 // les identifiants déjà masqués par IBKR (« B******AU ») et les valeurs personnelles
 // recopiées ailleurs. Commun aux deux formats.
-function nettoyer(texte, ids, aBalayer, st) {
-  const faux = new Map(ids.map((id, i) => [id, "U" + String(i).padStart(7, "0")]));
+// Faux numéro de compte : calcul scrypt (64 Mo, ~2-3 s sur un PC) du vrai numéro.
+// Toujours le même résultat pour un même compte, sur tout ordinateur, sans rien
+// garder. Lent et gourmand en mémoire exprès : le code est public et il n'existe
+// qu'environ 100 millions de numéros IBKR ; il faudrait les essayer un par un.
+const SEL = new TextEncoder().encode("flex-anonyme-v1");
+const memoFaux = new Map();
+async function fauxNumero(id) {
+  const cle = id.trim().toUpperCase();
+  if (!memoFaux.has(cle)) {
+    const h = await scrypt.scrypt(new TextEncoder().encode(cle), SEL, 65536, 8, 1, 32);
+    let n = 0;
+    for (let i = 0; i < 6; i++) n = n * 256 + h[i];          // 48 bits, exact en JS
+    memoFaux.set(cle, "U" + (10000000 + (n % 90000000)));    // U + 8 chiffres
+  }
+  return memoFaux.get(cle);
+}
+async function fauxNumeros(ids) {
+  const faux = new Map();
+  for (const id of ids) faux.set(id, await fauxNumero(id));
+  return faux;
+}
+
+function nettoyer(texte, ids, aBalayer, st, faux) {
   for (const id of ids) {
     if (!/^[UI]\d{6,9}$/.test(id)) {
       texte = texte.replace(new RegExp(echapper(id), "g"), () => { st.compte++; return faux.get(id); });
@@ -250,14 +277,14 @@ function nettoyer(texte, ids, aBalayer, st) {
   }
   const bas = texte.toLowerCase();
   const restes = [...ids, ...autres.keys(), ...aBalayer].filter((v) => bas.includes(v.toLowerCase()));
-  return { texte, restes };
+  return { texte, restes, faux };
 }
 
 function nouvellesStats() {
   return { compte: 0, champs: 0, alias: 0, transferts: 0, autres: 0, masques: 0, balayes: 0 };
 }
 
-function anonymiserXML(xml) {
+async function anonymiserXML(xml) {
   if (!/<FlexQueryResponse\b/.test(xml) || !/<FlexStatement\b/.test(xml)) throw new Error("format-xml");
   const st = nouvellesStats();
   const ids = [];
@@ -278,8 +305,8 @@ function anonymiserXML(xml) {
       st.transferts++;
       return k === "account" ? 'account="XXXXXXX"' : 'accountName=""';
     }));
-  const r = nettoyer(xml, ids, aBalayer, st);
-  return { texte: r.texte, st, restes: r.restes, type: "xml" };
+  const r = nettoyer(xml, ids, aBalayer, st, await fauxNumeros(ids));
+  return { texte: r.texte, st, restes: r.restes, faux: r.faux, type: "xml" };
 }
 
 // Découpe une ligne CSV en champs bruts (guillemets compris). null si un champ
@@ -301,7 +328,7 @@ const valeur = (brut) => {
   return s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1).replace(/""/g, '"') : s;
 };
 
-function anonymiserCSV(csv) {
+async function anonymiserCSV(csv) {
   const st = nouvellesStats();
   const fin = csv.includes("\r\n") ? "\r\n" : "\n";
   const lignes = csv.split(/\r?\n/);
@@ -325,12 +352,13 @@ function anonymiserCSV(csv) {
     }
   });
   if (!section) throw new Error("format-csv");
-  const r = nettoyer(lignes.join(fin), ids, aBalayer, st);
-  return { texte: r.texte, st, restes: r.restes, type: "csv" };
+  const r = nettoyer(lignes.join(fin), ids, aBalayer, st, await fauxNumeros(ids));
+  return { texte: r.texte, st, restes: r.restes, faux: r.faux, type: "csv" };
 }
 
-function nomSortie(nom, ext) {
-  const base = nom.replace(/\.(xml|csv)$/i, "").replace(/[UI]\d{6,9}/g, "U0000000");
+function nomSortie(nom, ext, faux) {
+  const base = nom.replace(/\.(xml|csv)$/i, "")
+    .replace(/[UI]\d{6,9}/g, (m) => (faux && faux.get(m)) || "ANONYME");
   return `${base}_anonyme.${ext}`;
 }
 
@@ -353,7 +381,7 @@ function afficher(nom, res, erreur) {
   }
   const s = res.st;
   const lignes = [
-    ["Numéro de compte remplacé", s.compte],
+    [`Numéro de compte remplacé par ${[...res.faux.values()].join(", ") || "—"}`, s.compte],
     ["Champs personnels vidés (nom, adresse, e-mail…)", s.champs],
   ];
   if (res.type === "xml") lignes.push(["Alias du compte retiré", s.alias]);
@@ -396,22 +424,28 @@ async function lire(fichier) {
     afficher(fichier.name, null, "Lecture du fichier impossible. Réessayez en le choisissant à nouveau.");
     return;
   }
+  const box = $("result");
+  box.hidden = false; box.classList.remove("err");
+  $("r-file").textContent = fichier.name; $("r-stats").innerHTML = ""; $("r-note").textContent = "";
+  $("b-save").hidden = true;
+  $("r-status").className = "status";
+  $("r-status").textContent = "Calcul de votre numéro anonyme… (quelques secondes)";
   let res;
-  try { res = ext.toLowerCase() === "xml" ? anonymiserXML(texte) : anonymiserCSV(texte); }
+  try { res = ext.toLowerCase() === "xml" ? await anonymiserXML(texte) : await anonymiserCSV(texte); }
   catch (e) {
     afficher(fichier.name, null, e.message === "format-csv"
       ? "Ce CSV n'est pas un relevé d'activité IBKR (section « Informations du compte » introuvable). Envoyez-le à biznours pour qu'il soit pris en charge."
       : "Ce fichier n'est pas un relevé FlexQuery IBKR (balise FlexQueryResponse absente).");
     return;
   }
-  courant = { nom: fichier.name, texte: res.texte, type: res.type };
+  courant = { nom: fichier.name, texte: res.texte, type: res.type, faux: res.faux };
   afficher(fichier.name, res, null);
 }
 
 async function enregistrer() {
   if (!courant) return;
   const note = $("r-note");
-  const nomFichier = nomSortie(courant.nom, courant.type);
+  const nomFichier = nomSortie(courant.nom, courant.type, courant.faux);
   // Page publiée sur claude.ai : téléchargement via la capacité « downloads ».
   // Le .csv passe tel quel ; le .xml n'est pas accepté → compressé en .zip.
   if (window.claude && typeof window.claude.use === "function") {
@@ -430,7 +464,7 @@ async function enregistrer() {
         const zip = new JSZip();
         zip.file(nomFichier, courant.texte);
         const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-        await dl.save({ filename: nomSortie(courant.nom, "zip"), data: blob });
+        await dl.save({ filename: nomSortie(courant.nom, "zip", courant.faux), data: blob });
         note.textContent = "Le fichier arrive compressé (.zip) : clic droit → « Extraire tout » pour retrouver le .xml anonymisé.";
       }
     } catch (e) {
