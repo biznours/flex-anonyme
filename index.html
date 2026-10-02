@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flex Anonyme</title>
+<meta name="description" content="Retirez nom, adresse et numéro de compte d'un relevé IBKR / MEXEM (XML FlexQuery ou CSV) avant de l'envoyer. Tout se fait dans votre navigateur.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%230d6b5b' d='M8 1 2.5 3.2v4.1c0 3.4 2.3 6.4 5.5 7.2 3.2-.8 5.5-3.8 5.5-7.2V3.2L8 1Z'/%3E%3Crect x='4.5' y='6.6' width='7' height='2' fill='%23fff'/%3E%3C/svg%3E">
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+/* Mise en page : une colonne d'outil, motif « caviardage » (barres noires) tiré du relevé lui-même. */
+:root {
+  --bg: #eef1f0;
+  --surface: #ffffff;
+  --ink: #15201e;
+  --muted: #5b6966;
+  --line: #d3dad8;
+  --accent: #0d6b5b;
+  --accent-ink: #ffffff;
+  --redact: #15201e;
+  --ok: #1f7a43;
+  --warn: #9a5b00;
+  --err: #b0362b;
+  --mark: #dfeee9;
+  --font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101716; --surface: #18211f; --ink: #e5ece9; --muted: #9aa9a5;
+    --line: #2c3936; --accent: #3fb59c; --accent-ink: #0b1513; --redact: #e5ece9;
+    --ok: #5cc98a; --warn: #e2a64b; --err: #ef7d70; --mark: #1d3430;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101716; --surface: #18211f; --ink: #e5ece9; --muted: #9aa9a5;
+  --line: #2c3936; --accent: #3fb59c; --accent-ink: #0b1513; --redact: #e5ece9;
+  --ok: #5cc98a; --warn: #e2a64b; --err: #ef7d70; --mark: #1d3430;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-inline: 16px; padding-block: 0 48px;
+}
+.page { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+header { padding-top: 40px; display: flex; flex-direction: column; gap: 10px; }
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+h1 {
+  font-family: var(--font-display); font-stretch: 78%; font-weight: 800;
+  font-size: clamp(2.2rem, 7vw, 3.4rem); line-height: 1; margin: 0; letter-spacing: -0.01em;
+}
+h1 .bar { display: inline-block; background: var(--redact); color: transparent; border-radius: 2px; padding: 0 .12em; margin-left: .05em; user-select: none; }
+.tag { font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.lead { margin: 0; max-width: 60ch; font-size: 1.05rem; text-wrap: pretty; }
+.promise { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; color: var(--ok); font-weight: 500; }
+.promise svg { flex: none; }
+
+h2 { font-family: var(--font-display); font-stretch: 85%; font-weight: 700; font-size: 1.25rem; margin: 0; text-wrap: balance; }
+
+.drop {
+  background: var(--surface); border: 2px dashed var(--line); border-radius: 10px;
+  padding: 28px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+  cursor: pointer; transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--mark); }
+.drop:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.drop strong { font-size: 1.05rem; }
+.drop .hint { color: var(--muted); font-size: 13.5px; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.btn {
+  font: inherit; font-weight: 600; border: 0; border-radius: 6px; padding: 10px 18px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink);
+}
+.btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.btn[disabled] { opacity: .5; cursor: default; }
+.btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.result.err { border-color: var(--err); }
+.result .file { font-family: var(--font-mono); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.status { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+.status.ok { color: var(--ok); } .status.err { color: var(--err); } .status.warn { color: var(--warn); }
+.stats { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; font-size: 14px; }
+.stats li { display: contents; }
+.stats .n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+.col { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.col h3 { margin: 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.col ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
+
+.sample { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sample .cap { padding: 10px 16px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sample pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; color: var(--ink); }
+.sample .k { color: var(--muted); }
+.sample .r { background: var(--redact); color: transparent; border-radius: 2px; user-select: none; }
+.sample .v { color: var(--accent); }
+
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+details + details { margin-top: -18px; }
+summary { cursor: pointer; font-weight: 600; }
+details p { margin: 10px 0 0; max-width: 65ch; }
+footer { font-size: 12.5px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="page">
+  <header>
+    <span class="tag">Relevés IBKR / MEXEM · XML FlexQuery et CSV</span>
+    <div class="brand"><h1>Flex Anonyme<span class="bar" aria-hidden="true">████</span></h1></div>
+    <p class="lead">Retirez votre nom, votre adresse et votre numéro de compte d'un relevé IBKR (XML FlexQuery ou CSV) avant de l'envoyer à quelqu'un. Le reste du fichier ne change pas : il s'importe comme l'original dans wheel-suite ou OLT.</p>
+    <span class="promise"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1 2.5 3.2v4.1c0 3.4 2.3 6.4 5.5 7.2 3.2-.8 5.5-3.8 5.5-7.2V3.2L8 1Zm-1 10L4.2 8.2l1.1-1.1L7 8.8l3.7-3.7 1.1 1.1L7 11Z"/></svg>Le fichier ne quitte pas votre ordinateur : tout se fait dans votre navigateur.</span>
+  </header>
+
+  <section aria-labelledby="t-depot" style="display:flex;flex-direction:column;gap:12px">
+    <h2 id="t-depot">Déposer le relevé</h2>
+    <label class="drop" id="drop" for="fichier">
+      <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8l-5-5Zm0 0v5h5M9 13h6M9 16.5h4"/></svg>
+      <strong>Glissez votre fichier .xml ou .csv ici</strong>
+      <span class="hint">ou cliquez pour le choisir · un relevé par fichier, plusieurs années possibles l'une après l'autre</span>
+      <input type="file" id="fichier" accept=".xml,.csv,text/xml,application/xml,text/csv">
+    </label>
+
+    <div class="result" id="result" hidden>
+      <div class="file" id="r-file"></div>
+      <div class="status" id="r-status"></div>
+      <ul class="stats" id="r-stats"></ul>
+      <div class="actions" id="r-actions">
+        <button class="btn" id="b-save" type="button">Télécharger le fichier anonymisé</button>
+      </div>
+      <p class="note" id="r-note"></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="t-quoi" style="display:flex;flex-direction:column;gap:12px">
+    <h2 id="t-quoi">Ce qui est retiré, ce qui reste</h2>
+    <div class="grid2">
+      <div class="col">
+        <h3>Retiré</h3>
+        <ul>
+          <li>Nom, adresse postale et adresse de résidence</li>
+          <li>E-mail et date de naissance</li>
+          <li>Alias du compte, dates d'ouverture</li>
+          <li>Votre numéro de compte IBKR, remplacé partout par <code>U0000000</code>, y compris dans le nom du fichier</li>
+          <li>Les numéros d'autres comptes ou courtiers dans les transferts</li>
+          <li>Votre identifiant de connexion, quand IBKR l'a laissé à moitié masqué</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3>Reste visible</h3>
+        <ul>
+          <li>Les opérations : achats, ventes, options, assignations</li>
+          <li>Les positions, le cash et la valeur du compte</li>
+          <li>Les dépôts, dividendes, intérêts et taux de change</li>
+          <li>La devise et le type de compte (cash ou marge)</li>
+        </ul>
+        <p class="note">Le fichier ne dit plus qui vous êtes, mais il montre toujours ce que contient le compte.</p>
+      </div>
+    </div>
+    <div class="sample">
+      <div class="cap"><span>Exemple : début d'un relevé, avant → après</span><span class="mono">&lt;AccountInformation …&gt;</span></div>
+<pre><span class="k">accountId=</span>"<span class="r">U1234567</span>"  →  <span class="v">"U0000000"</span>
+<span class="k">name=</span>"<span class="r">Prénom NOM</span>"  →  <span class="v">""</span>
+<span class="k">street=</span>"<span class="r">12 rue des Lilas</span>"  →  <span class="v">""</span>
+<span class="k">primaryEmail=</span>"<span class="r">prenom@exemple.fr</span>"  →  <span class="v">""</span>
+<span class="k">dateOfBirth=</span>"<span class="r">19700101</span>"  →  <span class="v">""</span>
+<span class="k">currency=</span>"EUR"  <span class="k">accountCapabilities=</span>"Margin"  →  <span class="v">inchangés</span></pre>
+    </div>
+  </section>
+
+  <section aria-labelledby="t-faq" style="display:flex;flex-direction:column;gap:12px">
+    <h2 id="t-faq">Questions</h2>
+    <details>
+      <summary>Comment être sûr que rien n'est envoyé ?</summary>
+      <p>La page lit le fichier avec votre navigateur et le transforme sur place. Pour le vérifier : chargez la page, coupez votre connexion internet, puis déposez le fichier. Tout fonctionne quand même.</p>
+    </details>
+    <details>
+      <summary>Le fichier anonymisé marche-t-il dans wheel-suite ou OLT ?</summary>
+      <p>Oui. Seuls les champs personnels changent ; les opérations, positions et montants sont identiques à l'octet près. Un XML s'importe dans wheel-suite, un CSV dans OLT, comme l'original.</p>
+    </details>
+    <details>
+      <summary>Quels CSV sont acceptés ?</summary>
+      <p>Les relevés d'activité IBKR / MEXEM en CSV, ceux qui commencent par la section « Informations du compte » (ou « Account Information » en anglais). Un autre CSV est refusé avec un message : envoyez-le à biznours pour qu'il soit pris en charge.</p>
+    </details>
+  </section>
+
+  <footer>Flex Anonyme · outil de la communauté wheel-suite</footer>
+</div>
+
+<script>
+// ── XML FlexQuery : champs personnels de <AccountInformation> (relevés réels).
+const PERSO_XML = [
+  "name", "acctAlias", "masterName", "accountRepName", "accountRepPhone",
+  "street", "street2", "city", "state", "country", "postalCode",
+  "streetResidentialAddress", "street2ResidentialAddress", "cityResidentialAddress",
+  "stateResidentialAddress", "countryResidentialAddress", "postalCodeResidentialAddress",
+  "primaryEmail", "dateOfBirth", "dateOpened", "dateFunded", "lastTradedDate",
+];
+// Valeurs cherchées aussi ailleurs dans le fichier (jamais les dates ni les codes courts).
+const BALAYER_XML = ["name", "masterName", "accountRepName", "street", "street2",
+  "streetResidentialAddress", "street2ResidentialAddress", "primaryEmail"];
+
+// ── CSV relevé d'activité IBKR / MEXEM : section « Informations du compte »
+// (version française vue dans des relevés MEXEM réels) ou « Account Information ».
+const SECTIONS_COMPTE_CSV = ["informations du compte", "account information"];
+const CHAMPS_COMPTE_CSV = ["compte", "account"];
+const CHAMPS_PERSO_CSV = [
+  "nom", "name", "alias", "alias du compte", "account alias",
+  "adresse", "address", "adresse e-mail", "e-mail", "email",
+  "date de naissance", "date of birth", "téléphone", "phone",
+];
+
+function echapper(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// Remplace les numéros de compte (le relevé d'abord, puis tout numéro IBKR U…/I…),
+// les identifiants déjà masqués par IBKR (« B******AU ») et les valeurs personnelles
+// recopiées ailleurs. Commun aux deux formats.
+function nettoyer(texte, ids, aBalayer, st) {
+  const faux = new Map(ids.map((id, i) => [id, "U" + String(i).padStart(7, "0")]));
+  for (const id of ids) {
+    if (!/^[UI]\d{6,9}$/.test(id)) {
+      texte = texte.replace(new RegExp(echapper(id), "g"), () => { st.compte++; return faux.get(id); });
+    }
+  }
+  const autres = new Map();
+  texte = texte.replace(/\b[UI]\d{6,9}\b/g, (num) => {
+    if (faux.has(num)) { st.compte++; return faux.get(num); }
+    if (!autres.has(num)) autres.set(num, "U9" + String(autres.size + 1).padStart(6, "0"));
+    st.autres++;
+    return autres.get(num);
+  });
+  texte = texte.replace(/\b[A-Za-z0-9]\*{3,}[A-Za-z0-9]*\b/g, () => { st.masques++; return "******"; });
+  for (const v of aBalayer) {
+    texte = texte.replace(new RegExp(echapper(v), "gi"), () => { st.balayes++; return "ANONYME"; });
+  }
+  const bas = texte.toLowerCase();
+  const restes = [...ids, ...autres.keys(), ...aBalayer].filter((v) => bas.includes(v.toLowerCase()));
+  return { texte, restes };
+}
+
+function nouvellesStats() {
+  return { compte: 0, champs: 0, alias: 0, transferts: 0, autres: 0, masques: 0, balayes: 0 };
+}
+
+function anonymiserXML(xml) {
+  if (!/<FlexQueryResponse\b/.test(xml) || !/<FlexStatement\b/.test(xml)) throw new Error("format-xml");
+  const st = nouvellesStats();
+  const ids = [];
+  for (const m of xml.matchAll(/\baccountId="([^"]+)"/g)) if (!ids.includes(m[1])) ids.push(m[1]);
+
+  const aBalayer = new Set();
+  xml = xml.replace(/<AccountInformation\b[^>]*>/g, (balise) =>
+    balise.replace(/\b([A-Za-z0-9_]+)="([^"]*)"/g, (tout, k, v) => {
+      if (!PERSO_XML.includes(k) || v === "") return tout;
+      if (BALAYER_XML.includes(k) && v.trim().length >= 5) aBalayer.add(v.trim());
+      st.champs++;
+      return `${k}=""`;
+    }));
+  xml = xml.replace(/\bacctAlias="([^"]+)"/g, () => { st.alias++; return 'acctAlias=""'; });
+  xml = xml.replace(/<Transfer\b[^>]*>/g, (balise) =>
+    balise.replace(/\b(account|accountName)="([^"]*)"/g, (tout, k, v) => {
+      if (v === "" || v === "--") return tout;
+      st.transferts++;
+      return k === "account" ? 'account="XXXXXXX"' : 'accountName=""';
+    }));
+  const r = nettoyer(xml, ids, aBalayer, st);
+  return { texte: r.texte, st, restes: r.restes, type: "xml" };
+}
+
+// Découpe une ligne CSV en champs bruts (guillemets compris). null si un champ
+// entre guillemets continue sur la ligne suivante.
+function decouper(ligne) {
+  const champs = [];
+  let debut = 0, dansGuillemets = false;
+  for (let j = 0; j < ligne.length; j++) {
+    const c = ligne[j];
+    if (c === '"') dansGuillemets = !dansGuillemets;
+    else if (c === "," && !dansGuillemets) { champs.push(ligne.slice(debut, j)); debut = j + 1; }
+  }
+  if (dansGuillemets) return null;
+  champs.push(ligne.slice(debut));
+  return champs;
+}
+const valeur = (brut) => {
+  const s = brut.trim();
+  return s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1).replace(/""/g, '"') : s;
+};
+
+function anonymiserCSV(csv) {
+  const st = nouvellesStats();
+  const fin = csv.includes("\r\n") ? "\r\n" : "\n";
+  const lignes = csv.split(/\r?\n/);
+  const ids = [];
+  const aBalayer = new Set();
+  let section = false;
+  lignes.forEach((ligne, i) => {
+    const ch = decouper(ligne);
+    if (!ch || ch.length < 4) return;
+    const sec = valeur(ch[0]).replace(/^﻿/, "").toLowerCase();
+    if (!SECTIONS_COMPTE_CSV.includes(sec) || valeur(ch[1]) !== "Data") return;
+    section = true;
+    const champ = valeur(ch[2]).toLowerCase();
+    const v = valeur(ch.slice(3).join(",")).trim();
+    if (!v) return;
+    if (CHAMPS_COMPTE_CSV.includes(champ)) { if (!ids.includes(v)) ids.push(v); return; }
+    if (CHAMPS_PERSO_CSV.includes(champ)) {
+      if (v.length >= 5) aBalayer.add(v);
+      lignes[i] = ch.slice(0, 3).join(",") + ",";
+      st.champs++;
+    }
+  });
+  if (!section) throw new Error("format-csv");
+  const r = nettoyer(lignes.join(fin), ids, aBalayer, st);
+  return { texte: r.texte, st, restes: r.restes, type: "csv" };
+}
+
+function nomSortie(nom, ext) {
+  const base = nom.replace(/\.(xml|csv)$/i, "").replace(/[UI]\d{6,9}/g, "U0000000");
+  return `${base}_anonyme.${ext}`;
+}
+
+const fmt = (n) => n.toLocaleString("fr-FR");
+const $ = (id) => document.getElementById(id);
+let courant = null;
+
+function afficher(nom, res, erreur) {
+  const box = $("result");
+  box.hidden = false;
+  box.classList.toggle("err", !!erreur);
+  $("r-file").textContent = nom;
+  $("r-stats").innerHTML = "";
+  $("r-note").textContent = "";
+  $("b-save").hidden = !!erreur;
+  if (erreur) {
+    $("r-status").className = "status err";
+    $("r-status").textContent = erreur;
+    return;
+  }
+  const s = res.st;
+  const lignes = [
+    ["Numéro de compte remplacé", s.compte],
+    ["Champs personnels vidés (nom, adresse, e-mail…)", s.champs],
+  ];
+  if (res.type === "xml") lignes.push(["Alias du compte retiré", s.alias]);
+  if (s.autres + s.transferts) lignes.push(["Numéros d'autres comptes masqués", s.autres + s.transferts]);
+  if (s.masques) lignes.push(["Identifiant partiellement masqué par IBKR, effacé", s.masques]);
+  if (s.balayes) lignes.push(["Nom ou adresse retrouvés ailleurs et retirés", s.balayes]);
+  for (const [l, n] of lignes) {
+    const li = document.createElement("li");
+    const a = document.createElement("span"); a.textContent = l;
+    const b = document.createElement("span"); b.className = "n"; b.textContent = fmt(n) + " ×";
+    li.append(a, b);
+    $("r-stats").append(li);
+  }
+  if (res.restes.length) {
+    $("r-status").className = "status err";
+    $("r-status").textContent = "Contrôle échoué : une donnée personnelle reste dans le fichier. Ne l'envoyez pas.";
+    $("b-save").hidden = true;
+  } else if (s.compte === 0 && s.champs === 0) {
+    $("r-status").className = "status warn";
+    $("r-status").textContent = "Aucune donnée personnelle trouvée. Vérifiez qu'il s'agit bien d'un relevé IBKR avant de l'envoyer.";
+  } else {
+    $("r-status").className = "status ok";
+    $("r-status").textContent = "Fichier anonymisé et contrôlé : aucune donnée retirée n'y figure plus.";
+  }
+}
+
+async function lire(fichier) {
+  courant = null;
+  if (!fichier) return;
+  const ext = (fichier.name.match(/\.(xml|csv)$/i) || [])[1];
+  if (!ext) {
+    afficher(fichier.name, null, "Format non pris en charge. Déposez un relevé IBKR en .xml (FlexQuery) ou en .csv (relevé d'activité).");
+    return;
+  }
+  let texte;
+  try {
+    // ignoreBOM : la marque d'encodage UTF-8 des CSV IBKR est gardée telle quelle.
+    texte = new TextDecoder("utf-8", { ignoreBOM: true }).decode(await fichier.arrayBuffer());
+  } catch {
+    afficher(fichier.name, null, "Lecture du fichier impossible. Réessayez en le choisissant à nouveau.");
+    return;
+  }
+  let res;
+  try { res = ext.toLowerCase() === "xml" ? anonymiserXML(texte) : anonymiserCSV(texte); }
+  catch (e) {
+    afficher(fichier.name, null, e.message === "format-csv"
+      ? "Ce CSV n'est pas un relevé d'activité IBKR (section « Informations du compte » introuvable). Envoyez-le à biznours pour qu'il soit pris en charge."
+      : "Ce fichier n'est pas un relevé FlexQuery IBKR (balise FlexQueryResponse absente).");
+    return;
+  }
+  courant = { nom: fichier.name, texte: res.texte, type: res.type };
+  afficher(fichier.name, res, null);
+}
+
+async function enregistrer() {
+  if (!courant) return;
+  const note = $("r-note");
+  const nomFichier = nomSortie(courant.nom, courant.type);
+  // Page publiée sur claude.ai : téléchargement via la capacité « downloads ».
+  // Le .csv passe tel quel ; le .xml n'est pas accepté → compressé en .zip.
+  if (window.claude && typeof window.claude.use === "function") {
+    let dl = null;
+    try { dl = await window.claude.use("downloads"); } catch { dl = null; }
+    if (!dl) {
+      note.textContent = "Le téléchargement n'est pas disponible dans cette vue. Ouvrez la page dans votre navigateur.";
+      return;
+    }
+    try {
+      if (courant.type === "csv") {
+        await dl.save({ filename: nomFichier, data: courant.texte });
+        note.textContent = "Fichier enregistré. C'est celui-là que vous pouvez envoyer.";
+      } else {
+        if (typeof JSZip === "undefined") { note.textContent = "Compression indisponible : rechargez la page."; return; }
+        const zip = new JSZip();
+        zip.file(nomFichier, courant.texte);
+        const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+        await dl.save({ filename: nomSortie(courant.nom, "zip"), data: blob });
+        note.textContent = "Le fichier arrive compressé (.zip) : clic droit → « Extraire tout » pour retrouver le .xml anonymisé.";
+      }
+    } catch (e) {
+      const code = e && e.code;
+      note.textContent = code === "declined" ? "Téléchargement annulé."
+        : code === "rate_limited" ? "Une demande est déjà ouverte : répondez-y puis réessayez."
+        : "Le téléchargement n'a pas pu se faire dans cette vue.";
+    }
+    return;
+  }
+  // Site classique : le fichier directement.
+  const mime = courant.type === "csv" ? "text/csv" : "application/xml";
+  const url = URL.createObjectURL(new Blob([courant.texte], { type: mime }));
+  const a = document.createElement("a");
+  a.href = url; a.download = nomFichier;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  note.textContent = "Fichier enregistré dans vos téléchargements. C'est celui-là que vous pouvez envoyer.";
+}
+
+const drop = $("drop");
+$("fichier").addEventListener("change", (e) => lire(e.target.files[0]));
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => lire(e.dataTransfer.files[0]));
+$("b-save").addEventListener("click", enregistrer);
+</script>
+</body>
+</html>
