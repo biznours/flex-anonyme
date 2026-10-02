@@ -84,6 +84,13 @@ h2 { font-family: var(--font-display); font-stretch: 85%; font-weight: 700; font
 .btn[disabled] { opacity: .5; cursor: default; }
 .btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 
+.membre { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; background: var(--mark); border-radius: 10px; padding: 12px 16px; }
+.membre .num { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 500; letter-spacing: .04em; }
+.membre .lib { font-size: 13.5px; color: var(--muted); }
+.membre form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.membre input { font: inherit; font-family: var(--font-mono); width: 11ch; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.membre .lien { background: none; border: 0; padding: 0; font: inherit; font-size: 13.5px; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.membre .err { color: var(--err); font-size: 13px; width: 100%; }
 .result { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .result.err { border-color: var(--err); }
 .result .file { font-family: var(--font-mono); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
@@ -136,6 +143,19 @@ footer { font-size: 12.5px; color: var(--muted); }
       <input type="file" id="fichier" accept=".xml,.csv,text/xml,application/xml,text/csv">
     </label>
 
+    <div class="membre" id="membre">
+      <span class="lib">Votre numéro de membre anonyme</span>
+      <span class="num" id="m-num">U0000000</span>
+      <button type="button" class="lien" id="m-changer">J'ai déjà un numéro</button>
+      <form id="m-form" hidden>
+        <label class="lib" for="m-saisie">Numéro à réutiliser</label>
+        <input id="m-saisie" maxlength="8" placeholder="U1234567" autocomplete="off">
+        <button class="btn secondary" type="submit">Utiliser</button>
+        <span class="err" id="m-err"></span>
+      </form>
+      <span class="lib" style="width:100%">Il remplace votre vrai numéro de compte dans tous vos fichiers. Notez-le : sur un autre ordinateur, saisissez-le pour garder le même.</span>
+    </div>
+
     <div class="result" id="result" hidden>
       <div class="file" id="r-file"></div>
       <div class="status" id="r-status"></div>
@@ -156,7 +176,7 @@ footer { font-size: 12.5px; color: var(--muted); }
           <li>Nom, adresse postale et adresse de résidence</li>
           <li>E-mail et date de naissance</li>
           <li>Alias du compte, dates d'ouverture</li>
-          <li>Votre numéro de compte IBKR, remplacé partout par <code>U0000000</code>, y compris dans le nom du fichier</li>
+          <li>Votre numéro de compte IBKR, remplacé partout par votre numéro de membre anonyme, y compris dans le nom du fichier</li>
           <li>Les numéros d'autres comptes ou courtiers dans les transferts</li>
           <li>Votre identifiant de connexion, quand IBKR l'a laissé à moitié masqué</li>
         </ul>
@@ -174,7 +194,7 @@ footer { font-size: 12.5px; color: var(--muted); }
     </div>
     <div class="sample">
       <div class="cap"><span>Exemple : début d'un relevé, avant → après</span><span class="mono">&lt;AccountInformation …&gt;</span></div>
-<pre><span class="k">accountId=</span>"<span class="r">U1234567</span>"  →  <span class="v">"U0000000"</span>
+<pre><span class="k">accountId=</span>"<span class="r">U1234567</span>"  →  <span class="v">"U4827193"</span>  <span class="k">(votre numéro de membre)</span>
 <span class="k">name=</span>"<span class="r">Prénom NOM</span>"  →  <span class="v">""</span>
 <span class="k">street=</span>"<span class="r">12 rue des Lilas</span>"  →  <span class="v">""</span>
 <span class="k">primaryEmail=</span>"<span class="r">prenom@exemple.fr</span>"  →  <span class="v">""</span>
@@ -230,8 +250,26 @@ function echapper(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 // Remplace les numéros de compte (le relevé d'abord, puis tout numéro IBKR U…/I…),
 // les identifiants déjà masqués par IBKR (« B******AU ») et les valeurs personnelles
 // recopiées ailleurs. Commun aux deux formats.
+// Numéro de membre : tiré au hasard une fois, gardé par le navigateur. Jamais
+// calculé à partir du vrai numéro (le code est public et les numéros IBKR sont
+// courts : un calcul se retrouverait en essayant tous les numéros).
+const CLE_MEMBRE = "flexAnonyme.numeroMembre";
+const FORMAT_MEMBRE = /^U[1-9]\d{6}$/;
+function tirerNumero() {
+  const a = new Uint32Array(1);
+  crypto.getRandomValues(a);
+  return "U" + (1000000 + (a[0] % 9000000));
+}
+let numeroMembre = null;
+try { numeroMembre = localStorage.getItem(CLE_MEMBRE); } catch { numeroMembre = null; }
+if (!numeroMembre || !FORMAT_MEMBRE.test(numeroMembre)) {
+  numeroMembre = tirerNumero();
+  try { localStorage.setItem(CLE_MEMBRE, numeroMembre); } catch { /* navigation privée */ }
+}
+
 function nettoyer(texte, ids, aBalayer, st) {
-  const faux = new Map(ids.map((id, i) => [id, "U" + String(i).padStart(7, "0")]));
+  // 1er compte du relevé → numéro de membre ; comptes suivants (rare) → U0000001…
+  const faux = new Map(ids.map((id, i) => [id, i === 0 ? numeroMembre : "U" + String(i).padStart(7, "0")]));
   for (const id of ids) {
     if (!/^[UI]\d{6,9}$/.test(id)) {
       texte = texte.replace(new RegExp(echapper(id), "g"), () => { st.compte++; return faux.get(id); });
@@ -240,7 +278,7 @@ function nettoyer(texte, ids, aBalayer, st) {
   const autres = new Map();
   texte = texte.replace(/\b[UI]\d{6,9}\b/g, (num) => {
     if (faux.has(num)) { st.compte++; return faux.get(num); }
-    if (!autres.has(num)) autres.set(num, "U9" + String(autres.size + 1).padStart(6, "0"));
+    if (!autres.has(num)) autres.set(num, "U00009" + String(autres.size + 1).padStart(2, "0"));
     st.autres++;
     return autres.get(num);
   });
@@ -330,7 +368,7 @@ function anonymiserCSV(csv) {
 }
 
 function nomSortie(nom, ext) {
-  const base = nom.replace(/\.(xml|csv)$/i, "").replace(/[UI]\d{6,9}/g, "U0000000");
+  const base = nom.replace(/\.(xml|csv)$/i, "").replace(/[UI]\d{6,9}/g, numeroMembre);
   return `${base}_anonyme.${ext}`;
 }
 
@@ -353,7 +391,7 @@ function afficher(nom, res, erreur) {
   }
   const s = res.st;
   const lignes = [
-    ["Numéro de compte remplacé", s.compte],
+    [`Numéro de compte remplacé par ${numeroMembre}`, s.compte],
     ["Champs personnels vidés (nom, adresse, e-mail…)", s.champs],
   ];
   if (res.type === "xml") lignes.push(["Alias du compte retiré", s.alias]);
@@ -380,8 +418,10 @@ function afficher(nom, res, erreur) {
   }
 }
 
+let dernierFichier = null;
 async function lire(fichier) {
   courant = null;
+  dernierFichier = fichier;
   if (!fichier) return;
   const ext = (fichier.name.match(/\.(xml|csv)$/i) || [])[1];
   if (!ext) {
@@ -450,6 +490,19 @@ async function enregistrer() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   note.textContent = "Fichier enregistré dans vos téléchargements. C'est celui-là que vous pouvez envoyer.";
 }
+
+function afficherMembre() { $("m-num").textContent = numeroMembre; }
+afficherMembre();
+$("m-changer").addEventListener("click", () => { $("m-form").hidden = false; $("m-saisie").focus(); });
+$("m-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("m-saisie").value.trim().toUpperCase();
+  if (!FORMAT_MEMBRE.test(v)) { $("m-err").textContent = "Format attendu : U suivi de 7 chiffres, par exemple U4827193."; return; }
+  numeroMembre = v;
+  try { localStorage.setItem(CLE_MEMBRE, v); } catch { /* navigation privée */ }
+  $("m-err").textContent = ""; $("m-form").hidden = true; afficherMembre();
+  if (courant) lire(dernierFichier);
+});
 
 const drop = $("drop");
 $("fichier").addEventListener("change", (e) => lire(e.target.files[0]));
