@@ -226,7 +226,7 @@ const BALAYER_XML = ["name", "masterName", "accountRepName", "street", "street2"
 const SECTIONS_COMPTE_CSV = ["informations du compte", "account information"];
 const CHAMPS_COMPTE_CSV = ["compte", "account"];
 const CHAMPS_PERSO_CSV = [
-  "nom", "name", "alias", "alias du compte", "account alias",
+  "nom", "name", "alias", "alias du compte", "alias de compte", "account alias",
   "adresse", "address", "adresse e-mail", "e-mail", "email",
   "date de naissance", "date of birth", "téléphone", "phone",
 ];
@@ -345,7 +345,8 @@ async function anonymiserCSV(csv) {
     const v = valeur(ch.slice(3).join(",")).trim();
     if (!v) return;
     if (CHAMPS_COMPTE_CSV.includes(champ)) { if (!ids.includes(v)) ids.push(v); return; }
-    if (CHAMPS_PERSO_CSV.includes(champ)) {
+    // Tout champ « alias » (libellé libre que le titulaire peut remplir avec son nom).
+    if (CHAMPS_PERSO_CSV.includes(champ) || champ.includes("alias")) {
       if (v.length >= 5) aBalayer.add(v);
       lignes[i] = ch.slice(0, 3).join(",") + ",";
       st.champs++;
