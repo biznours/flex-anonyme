@@ -201,7 +201,7 @@ footer { font-size: 12.5px; color: var(--muted); }
     </details>
     <details>
       <summary>Quels CSV sont acceptés ?</summary>
-      <p>Les relevés d'activité IBKR / MEXEM en CSV, ceux qui commencent par la section « Informations du compte » (ou « Account Information » en anglais). Un autre CSV est refusé avec un message : envoyez-le à biznours pour qu'il soit pris en charge.</p>
+      <p>Deux sortes : les relevés d'activité IBKR / MEXEM en CSV, ceux qui commencent par la section « Informations du compte » (ou « Account Information » en anglais), et les requêtes Flex exportées en CSV (celles dont la première colonne s'appelle « ClientAccountID », comme la requête OLT Tracker). Un autre CSV est refusé avec un message : envoyez-le à biznours pour qu'il soit pris en charge.</p>
     </details>
   </section>
 
@@ -357,6 +357,56 @@ async function anonymiserCSV(csv) {
   return { texte: r.texte, st, restes: r.restes, faux: r.faux, type: "csv" };
 }
 
+// ── CSV FlexQuery (requête Flex exportée en CSV, ex. OLT Tracker) : chaque bloc
+// commence par une ligne d'en-têtes contenant « ClientAccountID » ; mêmes champs
+// personnels que le XML, noms de colonnes en majuscule initiale.
+const PERSO_FLEX_CSV = [...PERSO_XML.map((k) => k.toLowerCase()), "accountalias"];
+const BALAYER_FLEX_CSV = BALAYER_XML.map((k) => k.toLowerCase());
+
+function estFlexCSV(csv) {
+  const premiere = csv.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0];
+  const ch = decouper(premiere) || [];
+  return ch.some((c) => valeur(c) === "ClientAccountID");
+}
+
+async function anonymiserFlexCSV(csv) {
+  const st = nouvellesStats();
+  const fin = csv.includes("\r\n") ? "\r\n" : "\n";
+  const lignes = csv.split(/\r?\n/);
+  const ids = [];
+  const aBalayer = new Set();
+  let entetes = null;
+  const vide = (brut) => (brut.trim().startsWith('"') ? '""' : "");
+  lignes.forEach((ligne, i) => {
+    const ch = decouper(ligne);
+    if (!ch) return;
+    const noms = ch.map((c) => valeur(c).replace(/^\uFEFF/, ""));
+    if (noms.includes("ClientAccountID")) { entetes = noms.map((n) => n.toLowerCase()); return; }
+    // Un autre nombre de colonnes = fin du bloc (ex. le bloc des taux de change,
+    // qui a ses propres en-têtes « Date/Time,FromCurrency,… » sans ClientAccountID).
+    if (!entetes || ch.length !== entetes.length) { entetes = null; return; }
+    let change = false;
+    ch.forEach((brut, j) => {
+      const col = entetes[j];
+      const v = valeur(brut).trim();
+      if (!col || v === "" || v === "--") return;
+      if (col === "clientaccountid") { if (!ids.includes(v)) ids.push(v); return; }
+      if (col === "accountalias") { st.alias++; ch[j] = vide(brut); change = true; return; }
+      if (col === "transferaccount") {
+        st.transferts++; ch[j] = brut.trim().startsWith('"') ? '"XXXXXXX"' : "XXXXXXX"; change = true; return;
+      }
+      if (col === "transferaccountname") { st.transferts++; ch[j] = vide(brut); change = true; return; }
+      if (PERSO_FLEX_CSV.includes(col)) {
+        if (BALAYER_FLEX_CSV.includes(col) && v.length >= 5) aBalayer.add(v);
+        st.champs++; ch[j] = vide(brut); change = true;
+      }
+    });
+    if (change) lignes[i] = ch.join(",");
+  });
+  const r = nettoyer(lignes.join(fin), ids, aBalayer, st, await fauxNumeros(ids));
+  return { texte: r.texte, st, restes: r.restes, faux: r.faux, type: "csv" };
+}
+
 function nomSortie(nom, ext, faux) {
   const base = nom.replace(/\.(xml|csv)$/i, "")
     .replace(/[UI]\d{6,9}/g, (m) => (faux && faux.get(m)) || "ANONYME");
@@ -414,7 +464,7 @@ async function lire(fichier) {
   if (!fichier) return;
   const ext = (fichier.name.match(/\.(xml|csv)$/i) || [])[1];
   if (!ext) {
-    afficher(fichier.name, null, "Format non pris en charge. Déposez un relevé IBKR en .xml (FlexQuery) ou en .csv (relevé d'activité).");
+    afficher(fichier.name, null, "Format non pris en charge. Déposez un relevé IBKR en .xml (FlexQuery) ou en .csv (relevé d'activité ou requête Flex).");
     return;
   }
   let texte;
@@ -432,10 +482,11 @@ async function lire(fichier) {
   $("r-status").className = "status";
   $("r-status").textContent = "Calcul de votre numéro anonyme… (quelques secondes)";
   let res;
-  try { res = ext.toLowerCase() === "xml" ? await anonymiserXML(texte) : await anonymiserCSV(texte); }
+  try { res = ext.toLowerCase() === "xml" ? await anonymiserXML(texte)
+      : estFlexCSV(texte) ? await anonymiserFlexCSV(texte) : await anonymiserCSV(texte); }
   catch (e) {
     afficher(fichier.name, null, e.message === "format-csv"
-      ? "Ce CSV n'est pas un relevé d'activité IBKR (section « Informations du compte » introuvable). Envoyez-le à biznours pour qu'il soit pris en charge."
+      ? "Ce CSV n'est ni un relevé d'activité IBKR (section « Informations du compte » introuvable) ni une requête Flex en CSV (colonne « ClientAccountID » introuvable). Envoyez-le à biznours pour qu'il soit pris en charge."
       : "Ce fichier n'est pas un relevé FlexQuery IBKR (balise FlexQueryResponse absente).");
     return;
   }

@@ -4,7 +4,7 @@ Page web qui retire les données personnelles d'un relevé IBKR / MEXEM avant de
 nom, adresse, e-mail, date de naissance, numéro de compte (remplacé par un faux numéro stable, y compris dans le nom
 du fichier), numéros d'autres comptes et identifiant de connexion à moitié masqué.
 
-Formats : XML FlexQuery et CSV de relevé d'activité (section « Informations du compte » / « Account Information »).
+Formats : XML FlexQuery, CSV de relevé d'activité (section « Informations du compte » / « Account Information ») et requête Flex exportée en CSV (colonne « ClientAccountID »).
 
 Tout se fait dans le navigateur : le fichier n'est envoyé nulle part. Les opérations, positions et montants
 restent identiques à l'octet près, et la page vérifie qu'aucune donnée retirée ne figure plus dans le fichier
